@@ -1,46 +1,40 @@
+/* eslint-disable import/no-named-as-default */
 import sha1 from 'sha1';
+import Queue from 'bull/lib/queue';
 import dbClient from '../utils/db';
+
+const userQueue = new Queue('email sending');
 
 export default class UsersController {
   static async postNew(req, res) {
-    const { email, password } = req.body;
+    const email = req.body ? req.body.email : null;
+    const password = req.body ? req.body.password : null;
 
     if (!email) {
-      res.status(400).send({
-        error: 'Missing email',
-      });
+      res.status(400).json({ error: 'Missing email' });
+      return;
     }
     if (!password) {
-      res.status(400).send({
-        error: 'Missing password',
-      });
+      res.status(400).json({ error: 'Missing password' });
+      return;
     }
+    const user = await (await dbClient.usersCollection()).findOne({ email });
 
-    const existEmail = await dbClient.users.findOne({ email });
-    if (existEmail) {
-      return res.status(400).send({
-        error: 'Already exist',
-      });
+    if (user) {
+      res.status(400).json({ error: 'Already exist' });
+      return;
     }
+    const insertionInfo = await (await dbClient.usersCollection())
+      .insertOne({ email, password: sha1(password) });
+    const userId = insertionInfo.insertedId.toString();
 
-    let createdUser;
+    userQueue.add({ userId });
+    res.status(201).json({ email, id: userId });
+  }
 
-    try {
-      createdUser = await dbClient.users.insertOne({
-        email,
-        password: sha1(password),
-      });
-    } catch (err) {
-      return res.status(500).send({
-        error: 'Error while creating an user',
-      });
-    }
+  static async getMe(req, res) {
+    const { user } = req;
 
-    const newUser = {
-      id: createdUser.insertedId,
-      email,
-    };
-
-    return res.send(201).send(newUser);
+    res.status(200).json({ email: user.email, id: user._id.toString() });
   }
 }
